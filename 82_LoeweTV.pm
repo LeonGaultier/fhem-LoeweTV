@@ -1185,7 +1185,7 @@ sub LoeweTV_ChannelList_AddChannelXML($$$$$$) {
     my @channel = ( $uuid, $locator, $caption, $shortinfo , $streamingurl );
     $hash->{helper}{ChannelList}->{$uuid} = \@channel;
     
-    push( $hash->{helper}{ChannelSequence}, $uuid );
+    push( @{$hash->{helper}{ChannelSequence}}, $uuid );
     
 }
 
@@ -1221,7 +1221,7 @@ sub LoeweTV_findUUIDForChannelName($$) {
     # no channellist ignore
     return undef if ( ! defined( $hash->{helper}{ChannelList} ) );
 
-    foreach my $uuid (keys $hash->{helper}{ChannelList}) {
+    foreach my $uuid (keys %{$hash->{helper}{ChannelList}}) {
       my $aname = LoeweTV_getNameForChannelUUID( $hash, $uuid );
       return $uuid if ( $aname eq $name );
     }
@@ -1233,7 +1233,7 @@ sub LoeweTV_findUUIDForChannelLocator($$) {
     # no channellist ignore
     return undef if ( ! defined( $hash->{helper}{ChannelList} ) );
 
-    foreach my $uuid (keys $hash->{helper}{ChannelList}) {
+    foreach my $uuid (keys %{$hash->{helper}{ChannelList}}) {
       my $alocator = LoeweTV_getLocatorForChannelUUID( $hash, $uuid );
       return $uuid if ( $alocator eq $locator );
     }
@@ -1245,7 +1245,7 @@ sub LoeweTV_findUUIDForChannelCaption($$) {
     # no channellist ignore
     return undef if ( ! defined( $hash->{helper}{ChannelList} ) );
 
-    foreach my $uuid (keys $hash->{helper}{ChannelList}) {
+    foreach my $uuid (keys %{$hash->{helper}{ChannelList}}) {
       my $aname = LoeweTV_getCaptionForChannelUUID( $hash, $uuid );
       return $uuid if ( $aname eq $name );
     }
