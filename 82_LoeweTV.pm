@@ -106,7 +106,10 @@
 ## - activate timerstatusrequest
 ## 0.0.43
 
-
+## - add textual set commands for HD recorder control
+## - add set off command
+## - add set on command (not complete yet, needs InternalTimer (+5 to +15 sec) after Wake-On-LAN
+## 0.0.44
 
 ##
 ###############################################################################
@@ -114,7 +117,7 @@
 ##  TODO
 ###############################################################################
 ## - 
-## - 
+## - reset access when not present
 ## - 
 ## - getMediaItem to distinguish between call from channellist crawler or get command
 ## - 
@@ -151,7 +154,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.43";
+my $version = "0.0.44";
 
 
 # Declare functions
@@ -383,6 +386,44 @@ sub LoeweTV_Set($@) {
         return "$cmd needs argument remote key" if ( ( scalar( @args ) != 1 ) );
         @actionargs = ( 'InjectRCKey', $args[0] );    
     
+
+    } elsif( lc $cmd eq 'on' ) {
+        return "$cmd does not accept any arguments" if ( ( defined( $args[0] ) ) );
+        LoeweTV_WakeUp_Udp($hash,$hash->{TVMAC},'255.255.255.255') if( defined($hash->{TVMAC}) );
+        #sleep 5;
+        LoeweTV_WakeUp_Udp($hash,$hash->{TVMAC},'255.255.255.255') if( defined($hash->{TVMAC}) );
+        #sleep 10;
+        LoeweTV_SendRequest($hash,"RequestAccess" );
+        LoeweTV_SendRequest($hash,"InjectRCKey", 22 );
+
+    } elsif( lc $cmd eq 'off' ) {
+        return "$cmd does not accept any arguments" if ( ( defined( $args[0] ) ) );
+        @actionargs = ( 'InjectRCKey', 12 );    
+    
+    } elsif( lc $cmd eq 'pause' ) {
+        return "$cmd does not accept any arguments" if ( ( defined( $args[0] ) ) );
+        @actionargs = ( 'InjectRCKey', "41hdr" );      
+
+    } elsif( lc $cmd eq 'stop' ) {
+        return "$cmd does not accept any arguments" if ( ( defined( $args[0] ) ) );
+        @actionargs = ( 'InjectRCKey', "54hdr" );     
+
+    } elsif( lc $cmd eq 'play' ) {
+       return "$cmd does not accept any arguments" if ( ( defined( $args[0] ) ) );
+        @actionargs = ( 'InjectRCKey', "53hdr" );     
+
+    } elsif( (lc $cmd eq 'rw') || (lc $cmd eq 'rewind') ) {
+        return "$cmd does not accept any arguments" if ( ( defined( $args[0] ) ) );
+        @actionargs = ( 'InjectRCKey', "50hdr" );     
+
+    } elsif( (lc $cmd eq 'ff') || (lc $cmd eq 'fastforward') ) {
+        return "$cmd does not accept any arguments" if ( ( defined( $args[0] ) ) );
+        @actionargs = ( 'InjectRCKey', "52hdr" );     
+
+    } elsif( (lc $cmd eq 'record') || (lc $cmd eq 'rec') ) {
+        return "$cmd does not accept any arguments" if ( ( defined( $args[0] ) ) );
+        @actionargs = ( 'InjectRCKey', "55hdr" );     
+
     } elsif( lc $cmd eq 'connect' ) {
         @actionargs = ( 'RequestAccess');    
    
@@ -419,8 +460,9 @@ sub LoeweTV_Set($@) {
 
     } else {
     
-        my $list    = "SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg connect:noArg ".
-                      " switchTo switchToNumber ";
+        my $list    = "off:noArg on:noArg pause:noArg stop:noArg play:noArg record:noArg fastforward:noArg rewind:noArg".
+              "SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg connect:noArg ".
+              " switchTo switchToNumber ";
         if ( LoeweTV_hasChannelList( $hash ) ) {
           my $onames = LoeweTV_GetChannelNames( $hash, "`´" );
           $onames =~ s/_/°°°/g;
