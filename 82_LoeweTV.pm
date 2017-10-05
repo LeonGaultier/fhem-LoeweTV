@@ -591,7 +591,8 @@ sub LoeweTV_TimerStatusRequest($) {
     my $name        = $hash->{NAME};
     
     # Do nothing when disabled (also for intervals)
-    if(! IsDisabled( $name )) {
+    if ( ( $init_done ) && (! IsDisabled( $name )) ) {
+
 
         Log3 $name, 4, "Sub LoeweTV_TimerStatusRequest ($name) - start requests";
 
