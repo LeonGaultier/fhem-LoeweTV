@@ -634,7 +634,7 @@ sub LoeweTV_TimerStatusRequest($) {
       
     Log3 $name, 5, "Sub LoeweTV_TimerStatusRequest ($name) - Done - new sequence - ".$hash->{INTERVAL}." s";
     if ( $hash->{INTERVAL} > 0 ) {
-      InternalTimer( gettimeofday()+$hash->{INTERVAL}, "LoeweTV_TimerStatusRequest", $hash, 1 );
+      InternalTimer( gettimeofday()+$hash->{INTERVAL}, "LoeweTV_TimerStatusRequest", $hash, 0 );
     }
 
 }
