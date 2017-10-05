@@ -111,13 +111,17 @@
 ## - add set on command (not complete yet, needs InternalTimer (+5 to +15 sec) after Wake-On-LAN
 ## 0.0.44
 
+## - correct startup behavior on timer (only execute when init done and correct timer request)
+## - log modified for timer operation
+## - reset access when not present
+## 0.0.45
+
 ##
 ###############################################################################
 ###############################################################################
 ##  TODO
 ###############################################################################
 ## - 
-## - reset access when not present
 ## - 
 ## - getMediaItem to distinguish between call from channellist crawler or get command
 ## - 
@@ -154,8 +158,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.44";
-
+my $version = "0.0.45";
 
 # Declare functions
 sub LoeweTV_Define($$);
@@ -590,17 +593,18 @@ sub LoeweTV_TimerStatusRequest($) {
     my $hash        = shift;
     my $name        = $hash->{NAME};
     
+    Log3 $name, 4, "Sub LoeweTV_TimerStatusRequest ($name) - started";
+    
     # Do nothing when disabled (also for intervals)
     if ( ( $init_done ) && (! IsDisabled( $name )) ) {
-
-
-        Log3 $name, 4, "Sub LoeweTV_TimerStatusRequest ($name) - start requests";
 
         if(LoeweTV_IsPresent( $hash )) {
         
           # do sendrequests only every second call
           if ( $hash->{TVSTATUS} ) {
     
+            Log3 $name, 4, "Sub LoeweTV_TimerStatusRequest ($name) - start requests";
+
             # handle regular requests if present
             #   deviceData, mute, volume, currentEvent
             LoeweTV_SendRequest($hash,'GetDeviceData');
@@ -1092,7 +1096,13 @@ sub LoeweTV_PresenceDone($) {
     Log3 $name, 4, "Sub LoeweTV_PresenceDone ($name) - Der Helper ist disabled. Daher wird hier abgebrochen" if($hash->{helper}{DISABLED});
     return if($hash->{helper}{DISABLED});
     
-    readingsSingleUpdate($hash,'presence',$response,1);
+    readingsBeginUpdate($hash);
+    readingsBulkUpdate($hash, "presence", $presence );   
+
+    if ( $presence ne 'present' ) {
+      readingsBulkUpdate($hash, "access", "-reset-" );   
+    } 
+    readingsEndUpdate($hash, 1);   
     
     Log3 $name, 4, "Sub LoeweTV_PresenceDone ($name) - Abschluss!";
 }
@@ -1104,7 +1114,10 @@ sub LoeweTV_PresenceAborted($) {
 
     
     delete($hash->{helper}{RUNNING_PID});
-    readingsSingleUpdate($hash,'presence','timedout', 1);
+    readingsBeginUpdate($hash);
+    readingsBulkUpdate($hash, "presence", 'timedout' );   
+    readingsBulkUpdate($hash, "access", "-reset-" );   
+    readingsEndUpdate($hash, 1);   
     
     Log3 $name, 4, "Sub LoeweTV_PresenceAborted ($name) - The BlockingCall Process terminated unexpectedly. Timedout!";
 }
