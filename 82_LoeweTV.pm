@@ -1035,7 +1035,7 @@ sub LoeweTV_HU_Callback($$$)
 
   #########################
   # start next command in queue if available
-  if ( ( defined( $hash->{actionQueue} ) ) && ( scalar( @{ $hash->{actionQueue} } ) ) ) {
+  if ( ( defined( $hash->{actionQueue} ) ) && ( scalar( @{ $hash->{actionQueue} } ) > 0 ) ) {
     my $ref = shift @{ $hash->{actionQueue} };
     Log3 $name, 4, "LoeweTV_HU_Callback $name: handle queued cmd with :@$ref[0]: ";
     LoeweTV_SendRequest( $hash, @$ref[0], @$ref[1], @$ref[2] );
