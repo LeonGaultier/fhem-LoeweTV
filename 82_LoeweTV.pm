@@ -116,6 +116,13 @@
 ## - reset access when not present
 ## 0.0.45
 
+## - Fix: presence
+## - merge changes from der.einstein 46/47
+## -    add reading for current channel number
+## -    add reading for current channel name
+## -    add reading for current streaming url
+## 0.0.48
+
 ##
 ###############################################################################
 ###############################################################################
@@ -158,7 +165,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.45";
+my $version = "0.0.48";
 
 # Declare functions
 sub LoeweTV_Define($$);
@@ -188,6 +195,7 @@ sub LoeweTV_getAnElementForChannelUUID($$$);
 sub LoeweTV_getNameForChannelUUID($$); 
 sub LoeweTV_getLocatorForChannelUUID($$);
 sub LoeweTV_getCaptionForChannelUUID($$);
+sub LoeweTV_getStreamingurlForChannelUUID($$);
 sub LoeweTV_findUUIDForChannelName($$);
 sub LoeweTV_findUUIDForChannelCaption($$);
 sub LoeweTV_findUUIDForChannelLocator($$);
@@ -695,8 +703,33 @@ sub LoeweTV_ParseRequestAccess($$) {
  
 } 
 
-
-
+sub LoeweTV_ParseCurrentEvent($$) {
+    
+    my ($hash,$locator)        = @_;
+    
+    my $name                    = $hash->{NAME};
+ 
+    return if ( ! defined($locator) );
+    
+    LoeweTV_PrepareReading($hash,"CurrentEvent_Locator",$locator);
+    
+    my $uuid = LoeweTV_findUUIDForChannelLocator($hash,$locator);
+    
+    my $chinfo = undef;
+    
+    if ( $uuid ) {
+        $chinfo = LoeweTV_getCaptionForChannelUUID($hash,$uuid);
+        LoeweTV_PrepareReading($hash,"CurrentChannel_Number",(defined($chinfo)?$chinfo:""));
+        $chinfo = LoeweTV_getNameForChannelUUID($hash,$uuid);
+        LoeweTV_PrepareReading($hash,"CurrentChannel_Name",(defined($chinfo)?$chinfo:""));
+        $chinfo = LoeweTV_getStreamingurlForChannelUUID($hash,$uuid);
+        LoeweTV_PrepareReading($hash,"CurrentChannel_Streamingurl",(defined($chinfo)?$chinfo:""));
+    } else {
+        LoeweTV_PrepareReading($hash,"CurrentChannel_Number","");
+        LoeweTV_PrepareReading($hash,"CurrentChannel_Name","");
+        LoeweTV_PrepareReading($hash,"CurrentChannel_Streamingurl","");
+    }
+}
 
 
 sub LoeweTV_PrepareReading($$$) {
@@ -860,7 +893,7 @@ sub LoeweTV_SendRequest($$;$$$) {
         "GetCurrentEvent"       =>  [sub {$content="<ltv:Player>0</ltv:Player>";},
                                         {"m:Name" => sub {LoeweTV_PrepareReading($hash,"CurrentEvent_Name", $_->text("m:Name"));},
                                         "m:ExtendedInfo" => sub {LoeweTV_PrepareReading($hash,"CurrentEvent_Info",$_->text("m:ExtendedInfo"));},
-                                        "m:Locator" => sub {LoeweTV_PrepareReading($hash,"CurrentEvent_Locator",$_->text("m:Locator"));}}
+                                        "m:Locator" => sub {LoeweTV_ParseCurrentEvent($hash, $_->text("m:Locator"))}}
                                     ],
                                         
         "GetNextEvent"          => [sub {$content="<ltv:Player>0</ltv:Player>";},
@@ -1097,9 +1130,9 @@ sub LoeweTV_PresenceDone($) {
     return if($hash->{helper}{DISABLED});
     
     readingsBeginUpdate($hash);
-    readingsBulkUpdate($hash, "presence", $presence );   
+    readingsBulkUpdate($hash, "presence", $response );   
 
-    if ( $presence ne 'present' ) {
+    if ( $response ne 'present' ) {
       readingsBulkUpdate($hash, "access", "-reset-" );   
     } 
     readingsEndUpdate($hash, 1);   
@@ -1271,7 +1304,12 @@ sub LoeweTV_getCaptionForChannelUUID($$) {
     my ($hash,$uuid)        = @_;
     return LoeweTV_getAnElementForChannelUUID( $hash, $uuid, $LoeweTV_cl_caption );
 }
-    
+
+sub LoeweTV_getStreamingurlForChannelUUID($$) {
+    my ($hash,$uuid)        = @_;
+    return LoeweTV_getAnElementForChannelUUID( $hash, $uuid, $LoeweTV_cl_streamingurl );
+}
+
 sub LoeweTV_findUUIDForChannelName($$) {
     my ($hash,$name)        = @_;
     # no channellist ignore
