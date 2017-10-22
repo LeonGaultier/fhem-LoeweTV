@@ -123,6 +123,17 @@
 ## -    add reading for current streaming url
 ## 0.0.48
 
+## - Substantial change in timer routines to avoid loewe issues / cleanup
+## - new attribute accessInterval for max age of access token
+## - reset access reading if age > accessInterval
+## - LoeweTV_Reset to unify reset of device
+## - chassis will be set to 0 on reset
+## - request deviceData only if chassis not set 
+## - currentEvent/playback only when channel list is defined
+## - channellist attr change will reset chanelllist
+## - ensure parts of channellist are at defined "" to avoid perl warnings
+## 0.0.49
+
 ##
 ###############################################################################
 ###############################################################################
@@ -131,8 +142,6 @@
 ## - 
 ## - 
 ## - getMediaItem to distinguish between call from channellist crawler or get command
-## - 
-## - get also media information for actual playback and store in readings
 ## - 
 ## - grab channel list of lists 
 ## - 
@@ -165,10 +174,11 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.48";
+my $version = "0.0.49";
 
 # Declare functions
 sub LoeweTV_Define($$);
+sub LoeweTV_Reset($);
 sub LoeweTV_Undef($$);
 sub LoeweTV_Initialize($);
 sub LoeweTV_Set($@);
@@ -186,6 +196,7 @@ sub LoeweTV_HasAccess($);
 sub LoeweTV_ParseRequestAccess($$);
 
 sub LoeweTV_hasChannelList($);
+sub LoeweTV_resetChannelList($);
 sub LoeweTV_NewChannelList($$);
 sub LoeweTV_ChannelList_Reference($$);
 sub LoeweTV_ChannelList_Reference($$);
@@ -228,7 +239,7 @@ sub LoeweTV_Initialize($) {
     $hash->{AttrFn}     = "LoeweTV_Attr";
 
     $hash->{AttrList}   =  "fhemMAC " .
-                        "interval " .
+                        "interval accessInterval " .
                         "channellist " .
                         "maxchannel " .
                         "disable:1,0 disabledForIntervals ".
@@ -266,7 +277,6 @@ sub LoeweTV_Define($$) {
 
     return "too few parameters: define <NAME> LoeweTV <HOST> <MAC-TV>" if( @a < 3 or @a > 4 );
     return "Cannot define Loewe device. Perl modul ${missingModul}is missing." if ( $missingModul );
-
     
     my $name            = $hash->{NAME};
     my $host            = $a[2];
@@ -274,15 +284,38 @@ sub LoeweTV_Define($$) {
     $hash->{HOST}       = $host;
     $hash->{FCID}       = 1234;
     $hash->{TVMAC}      = $a[3] if(defined($a[3]));
-    $hash->{VERSION}    = $version;
     $hash->{INTERVAL}   = 0;
-    $hash->{CLIENTID}   = "?";
     
+    $modules{LoeweTV}{defptr}{HOST} = $hash;
     
     Log3 $name, 3, "LoeweTV $name: defined LoeweTV device";
     
-    $modules{LoeweTV}{defptr}{HOST} = $hash;
-    readingsSingleUpdate($hash,'state','initialized',1);
+    LoeweTV_Reset($hash);
+
+    return undef;
+}
+
+
+sub LoeweTV_Reset($) {
+
+    my $hash        = shift;
+    my $name        = $hash->{NAME};
+    
+    $hash->{VERSION}    = $version;
+    $hash->{CLIENTID}   = "?";
+    
+    RemoveInternalTimer($hash);
+    
+    Log3 $name, 3, "LoeweTV $name: reset LoeweTV device";
+    
+    readingsBeginUpdate($hash);
+    readingsBulkUpdate($hash, "presence", 'initialized' );   
+    readingsBulkUpdate($hash, "access", "-reset-" );   
+    readingsBulkUpdate($hash,'state','initialized');
+    readingsBulkUpdate($hash,'Chassis',0);    
+    readingsEndUpdate($hash, 1);   
+    
+    LoeweTV_resetChannelList($hash);
     
     if( $init_done ) {
         InternalTimer( gettimeofday()+5, "LoeweTV_TimerStatusRequest", $hash, 0 );
@@ -292,6 +325,9 @@ sub LoeweTV_Define($$) {
     
     return undef;
 }
+
+
+
 
 sub LoeweTV_Undef($$) {
 
@@ -345,6 +381,19 @@ sub LoeweTV_Attr(@) {
         }
     }
     
+    elsif( $attrName eq "accessInterval " ) {
+        if( $cmd eq "set" ) {
+            
+            return "accessInterval needs to be longer than interval (".$hash->{INTERVAL}.")" 
+                  if ( ( $hash->{INTERVAL} ) && ( $attrVal < $hash->{INTERVAL} ) );
+            Log3 $name, 4, "LoeweTV ($name) - set access interval: $attrVal";
+        }
+    }
+    elsif( $attrName eq "channellist" ) {
+      # change of channellist attribute means always reset chanelllist
+      LoeweTV_resetChannelList($hash);
+    }
+
     elsif( $attrName eq "interval" ) {
         if( $cmd eq "set" ) {
             $hash->{INTERVAL}   = $attrVal;
@@ -390,6 +439,11 @@ sub LoeweTV_Set($@) {
     } elsif( lc $cmd eq 'wakeup' ) {
     
         LoeweTV_WakeUp_Udp($hash,$hash->{TVMAC},'255.255.255.255') if( defined($hash->{TVMAC}) );
+        return;
+    
+    } elsif( lc $cmd eq 'reset' ) {
+    
+        LoeweTV_Reset($hash);
         return;
     
     } elsif( lc $cmd eq 'remotekey' ) {
@@ -473,7 +527,7 @@ sub LoeweTV_Set($@) {
     
         my $list    = "off:noArg on:noArg pause:noArg stop:noArg play:noArg record:noArg fastforward:noArg rewind:noArg".
               "SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg connect:noArg ".
-              " switchTo switchToNumber ";
+              " switchTo switchToNumber reset:noArg ";
         if ( LoeweTV_hasChannelList( $hash ) ) {
           my $onames = LoeweTV_GetChannelNames( $hash, "`´" );
           $onames =~ s/_/°°°/g;
@@ -541,16 +595,14 @@ sub LoeweTV_Get($@) {
         $args[0] = AttrVal($name,"channellist","default") if ( ( scalar( @args ) < 1 ) );
         $args[1] = 0 if ( ( scalar( @args ) < 2 ) || ( $args[1] !~ /^\d+$/ ) );
         @actionargs = ( 'GetChannelList', $args[0], $args[1] );    
-        # Need to reset count to ensure calculation of min/max fragments
-        $hash->{helper}{ChannelListCount} = 0;        
-        $hash->{helper}{ChannelListView} = "";
+        # Need to reset channellist 
+        LoeweTV_resetChannelList( $hash );
 
     } elsif( lc $cmd eq 'drarchive' ) {
         $args[0] = 0 if ( ( scalar( @args ) < 1 ) || ( $args[0] !~ /^\d+$/ ) );
         @actionargs = ( 'GetDRPlusArchive', $args[0] );    
-        # Need to reset count to ensure calculation of min/max fragments
-        $hash->{helper}{ChannelListCount} = 0;        
-        $hash->{helper}{ChannelListView} = "";
+        # Need to reset channellist 
+        LoeweTV_resetChannelList( $hash );
         
     } elsif( lc $cmd eq 'mediaitem' ) {
         return "$cmd needs a uuid of a media item" if ( scalar( @args ) != 1 );
@@ -593,10 +645,10 @@ sub LoeweTV_Get($@) {
     return undef;
 }
 
+#######################################################
+############ timer handlng            #################
+#######################################################
 sub LoeweTV_TimerStatusRequest($) {
-
-### Hier kommen dann die Sachen rein welche alle x Sekunden ausfegührt werden um Infos zu erhalten
-### presence zum Beispiel
 
     my $hash        = shift;
     my $name        = $hash->{NAME};
@@ -605,26 +657,38 @@ sub LoeweTV_TimerStatusRequest($) {
     
     # Do nothing when disabled (also for intervals)
     if ( ( $init_done ) && (! IsDisabled( $name )) ) {
-
+    
         if(LoeweTV_IsPresent( $hash )) {
         
+          # reset access token if accessInterval is over
+          my $accInt = AttrVal($name,"accessInterval",0);
+          if ( ( $accInt ) && ( ReadingsAge( $name,"access",0 ) > $accInt ) ) {
+            # accessInterval set - so reset access token if due
+            readingsSingleUpdate($hash, "access", "-reset-", 1 );   
+          }
+    
           # do sendrequests only every second call
           if ( $hash->{TVSTATUS} ) {
     
             Log3 $name, 4, "Sub LoeweTV_TimerStatusRequest ($name) - start requests";
 
+            # device data will be only requested once or after reset
+            LoeweTV_SendRequest($hash,'GetDeviceData') if ( ! ReadingsVal($name,"Chassis",0) );
+            
             # handle regular requests if present
-            #   deviceData, mute, volume, currentEvent
-            LoeweTV_SendRequest($hash,'GetDeviceData');
+            #   mute, volume, currentEvent
             LoeweTV_SendRequest($hash,'GetVolume');
             LoeweTV_SendRequest($hash,'GetMute');
-            LoeweTV_SendRequest($hash,'GetCurrentEvent');
-            # ??? LoeweTV_SendRequest($hash,'GetCurrentPlayback');
 
             # if channellist not defined request channels
-            if ( ! defined( $hash->{helper}{ChannelList} ) ) {
+            
+            if ( ! LoeweTV_hasChannelList($hash) ) {
               my $cl = AttrVal($name,"channellist","default");
               LoeweTV_SendRequest($hash,'GetChannelList',$cl, 0 );
+            } else {
+              # current event / playback only when channel list is present
+              LoeweTV_SendRequest($hash,'GetCurrentEvent');
+              # ??? LoeweTV_SendRequest($hash,'GetCurrentPlayback');
             }
             $hash->{TVSTATUS} = 0;
           } else {
@@ -832,7 +896,10 @@ sub LoeweTV_SendRequest($$;$$$) {
                                         </InputEventSequence>'},{"ltv:InjectRCKey" => sub {$hash->{helper}{lastchunk} = $_->text_only();}},],
                                         
         "GetDeviceData"         =>  [sub {$content='';},
-                                     {"m:MAC-Address" => sub {LoeweTV_getTVMAC_setDEF($hash, $_->text("m:MAC-Address"));},"m:Chassis" => sub {LoeweTV_PrepareReading($hash,"Chassis",$_->text("m:Chassis"));},"m:SW-Version" => sub {LoeweTV_PrepareReading($hash,"SW_Version",$_->text("m:SW-Version"));}}],
+                                     {"m:MAC-Address" => sub {LoeweTV_getTVMAC_setDEF($hash, $_->text("m:MAC-Address"));},
+                                       "m:Chassis" => sub {LoeweTV_PrepareReading($hash,"Chassis",$_->text("m:Chassis"));},
+                                       "m:SW-Version" => sub {LoeweTV_PrepareReading($hash,"SW_Version",$_->text("m:SW-Version"));}}
+                                    ],
             
         "SetVolume"             => [sub {$content="<Value>".($actPar1*10000)."</Value>"},
                                     {"m:Value" => sub {LoeweTV_PrepareReading($hash,"volume", int(($_->text ("m:Value")/10000)+0.5));}}
@@ -1188,6 +1255,12 @@ sub LoeweTV_hasChannelList($) {
     return defined( $hash->{helper}{ChannelListView} );
 }
 
+sub LoeweTV_resetChannelList($) {
+    my ($hash)        = @_;
+    $hash->{helper}{ChannelListView} = undef;
+    $hash->{helper}{ChannelListCount} = 0;        
+}
+
 
 sub LoeweTV_NewChannelList($$) {
     my ($hash,$channelist)        = @_;
@@ -1261,8 +1334,14 @@ sub LoeweTV_ChannelList_AddChannelXML($$$$$$) {
     $caption = $caption->text_only() if ( defined( $caption ) );
     $shortinfo = $shortinfo->text_only() if ( defined( $shortinfo ) );
     $streamingurl = $streamingurl->text_only() if ( defined( $streamingurl ) );
+
+    # ensure values not undefined (uuid should be always there
+    $locator = "" if ( ! defined( $locator ) );
+    $caption = "" if ( ! defined( $caption ) );
+    $shortinfo = "" if ( ! defined( $shortinfo ) );
+    $streamingurl = "" if ( ! defined( $streamingurl ) );
     
-    Log3 $name, 2, "LoeweTV_ChannelList_AddChannel $name: DUPLICATE FOUND UUID: ".$uuid."  shortinfo: ".$shortinfo."   caption: ".$caption."  locator :".$locator."  streamingurl: ".$streamingurl.":";
+    Log3 $name, 2, "LoeweTV_ChannelList_AddChannel $name: Add channellist UUID: ".$uuid."  shortinfo: ".$shortinfo."   caption: ".$caption."  locator :".$locator."  streamingurl: ".$streamingurl.":";
     
     # no channellist ignore
     return undef if ( ! defined( $hash->{helper}{ChannelList} ) );
