@@ -134,6 +134,12 @@
 ## - ensure parts of channellist are at defined "" to avoid perl warnings
 ## 0.0.49
 
+## - new attr maxretries for retry sends if not http error
+## - if not succesful requeue the request and wait for some time
+## - stop queue processing if not present
+## - restart queue processing if present
+## 0.0.50
+
 ##
 ###############################################################################
 ###############################################################################
@@ -174,7 +180,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.49";
+my $version = "0.0.50";
 
 # Declare functions
 sub LoeweTV_Define($$);
@@ -194,6 +200,7 @@ sub LoeweTV_Attr(@);
 sub LoeweTV_IsPresent($);
 sub LoeweTV_HasAccess($);
 sub LoeweTV_ParseRequestAccess($$);
+sub LoeweTV_HU_RunQueue($);
 
 sub LoeweTV_hasChannelList($);
 sub LoeweTV_resetChannelList($);
@@ -243,6 +250,7 @@ sub LoeweTV_Initialize($) {
                         "channellist " .
                         "maxchannel " .
                         "disable:1,0 disabledForIntervals ".
+                        "maxRetries:4,3,2,1,0 ".
                         #"ip " .
                         #"tvmac " .
                         #"action " .
@@ -305,7 +313,8 @@ sub LoeweTV_Reset($) {
     $hash->{CLIENTID}   = "?";
     
     RemoveInternalTimer($hash);
-    
+    RemoveInternalTimer($hash->{HU_SR_PARAMS}) if ( defined($hash->{HU_SR_PARAMS}) );
+   
     Log3 $name, 3, "LoeweTV $name: reset LoeweTV device";
     
     readingsBeginUpdate($hash);
@@ -660,6 +669,15 @@ sub LoeweTV_TimerStatusRequest($) {
     
         if(LoeweTV_IsPresent( $hash )) {
         
+          Log3 $name, 4, "Sub LoeweTV_TimerStatusRequest ($name) - is present";
+          
+          # restart queue processing if PAUSED status
+          if ( ( defined( $hash->{doStatus} ) ) && ( $hash->{doStatus} =~ /^PAUSED/ ) ) {
+            # set timer - use param hash here to get a different timer!!!!
+            RemoveInternalTimer($hash->{HU_SR_PARAMS});
+            InternalTimer(gettimeofday()+5, "LoeweTV_HU_RunQueue", $hash->{HU_SR_PARAMS},0); 
+          }
+        
           # reset access token if accessInterval is over
           my $accInt = AttrVal($name,"accessInterval",0);
           if ( ( $accInt ) && ( ReadingsAge( $name,"access",0 ) > $accInt ) ) {
@@ -842,7 +860,12 @@ sub LoeweTV_SendRequest($$;$$$) {
     $hash->{actionQueue} = [] if ( ! defined( $hash->{actionQueue} ) );
 
     # Queue if not yet retried and currently waiting
-    if ( ( defined( $hash->{doStatus} ) ) && ( $hash->{doStatus} =~ /^WAITING/ ) && (  $retryCount == 0 ) ){
+    if ( ( ( defined( $hash->{doStatus} ) ) && ( $hash->{doStatus} =~ /^WAITING/ ) && (  $retryCount == 0 ) )
+      ## queue if already in PAUSED status and polling
+      || ( ( $hash->{INTERVAL} > 0 ) && ( defined( $hash->{doStatus} ) ) && ( $hash->{doStatus} =~ /^PAUSED/ ) )
+      ## if polling then stop sending requests if not present and set special doStatus PAUSED
+      || ( ( $hash->{INTERVAL} > 0 ) && ( ! LoeweTV_IsPresent( $hash ) ) )
+      ) {
       # add to queue
       Log3 $name, 4, "LoeweTV_SendRequest $name: add action to queue - args: ".$actionString;
       # RequestAccess will always be added to the beginning of the queue
@@ -1081,6 +1104,7 @@ sub LoeweTV_HU_Callback($$$)
 
   my $ret;
   my $action = $param->{action};
+  my $doRetry = 1;   # will be set to zero if error is found that should lead to no retry
 
   Log3 $name, 4, "LoeweTV_HU_Callback $name: ".
     (defined( $err )?"status err :".$err.":":"no error");
@@ -1092,12 +1116,13 @@ sub LoeweTV_HU_Callback($$$)
   } elsif ( $param->{code} != 200 ) {
     $ret = "HTTP-Error returned: ".$param->{code};
     $hash->{lastresponse} = $ret;
+    $doRetry = 0;
   } else {
   
     my $handlers = $param->{handlers};
     my $twig2;
   
-    Log3 $name, 2, "LoeweTV_HU_Callback $name: action: ".$action."   code : ".$param->{code};
+    Log3 $name, 4, "LoeweTV_HU_Callback $name: action: ".$action."   code : ".$param->{code};
 
     if ( ( defined($data) ) && ( $data ne "" ) ) {
       Log3 $name, 4, "LoeweTV_HU_Callback $name: handle XML values";
@@ -1124,7 +1149,44 @@ sub LoeweTV_HU_Callback($$$)
         CommandDeleteReading(undef,"$name $readName");
       }
     }
+  } else {
+    # not succesful
+    if ( ( $doRetry ) && ( defined( $param->{args} ) ) ) {
+      my $wait = $param->{args}[3];
+      my $maxRetries =  AttrVal($name,'maxRetries',0);
+      
+      Log3 $name, 4, "LoeweTV_HU_Callback $name: retry count so far $wait (max: $maxRetries) for send request ".
+            $param->{args}[0]." : ".
+            (defined($param->{args}[1])?$param->{args}[1]:"<undef>")." : ".
+            (defined($param->{args}[2])?$param->{args}[2]:"<undef>");
+      
+      if ( $wait <= $maxRetries ) {
+        # calculate wait time 5s * retries (will be stopped anyhow if not present)
+        $wait = $wait*5;
+        
+        Log3 $name, 4, "LoeweTV_HU_Callback $name: do retry for send request ".$param->{args}[0]." : ";
+
+        $hash->{actionQueue} = [] if ( ! defined( $hash->{actionQueue} ) );
+        push( @{ $hash->{actionQueue} }, $param->{args} );
+
+        # set timer - use param hash here to get a different timer!!!!
+        RemoveInternalTimer($hash->{HU_SR_PARAMS});
+        InternalTimer(gettimeofday()+$wait, "LoeweTV_HU_RunQueue", $hash->{HU_SR_PARAMS},0); 
+        
+        $hash->{doStatus} = "";
+
+        # finish
+        return;
+      }
+
+      Log3 $name, 3, "TelegramBot_Callback $name: Reached max retries (ret: $ret) for msg ".$param->{args}[0]." : ".$param->{args}[1];
+      
+    } elsif ( ! $doRetry ) {
+      Log3 $name, 3, "LoeweTV_HU_Callback $name: No retry for (ret: $ret) for send request ".$param->{args}[0]." : ";
+    }
   }
+  
+  
   readingsEndUpdate($hash, 1);   
   
   # clean param hash
@@ -1135,12 +1197,7 @@ sub LoeweTV_HU_Callback($$$)
 
   #########################
   # start next command in queue if available
-  if ( ( defined( $hash->{actionQueue} ) ) && ( scalar( @{ $hash->{actionQueue} } ) > 0 ) ) {
-    my $ref = shift @{ $hash->{actionQueue} };
-    Log3 $name, 4, "LoeweTV_HU_Callback $name: handle queued cmd with :@$ref[0]: ";
-    LoeweTV_SendRequest( $hash, @$ref[0], @$ref[1], @$ref[2] );
-  }
-  
+  LoeweTV_HU_RunQueue( $hash->{HU_SR_PARAMS} );  
 
 }
 
@@ -1228,6 +1285,23 @@ sub LoeweTV_PresenceAborted($) {
 #######################################################
 ############# HELPER   ################################
 #######################################################
+#####################################
+#  INTERNAL: Called to retry a send operation after wait time
+#   Gets the do params
+sub LoeweTV_HU_RunQueue($)
+{
+  my $param = shift;    
+  my $hash= $param->{hash};
+  my $name = $hash->{NAME};
+    
+  if ( ( defined( $hash->{actionQueue} ) ) && ( scalar( @{ $hash->{actionQueue} } ) > 0 ) ) {
+    my $ref = shift @{ $hash->{actionQueue} };
+    Log3 $name, 4, "LoeweTV_HU_Callback $name: handle queued cmd with :@$ref[0]: ";
+    LoeweTV_SendRequest( $hash, @$ref[0], @$ref[1], @$ref[2] );
+  }
+}
+
+
 sub LoeweTV_IsPresent($) {
     my $hash = shift;
     return (ReadingsVal($hash->{NAME},'presence','absent') eq 'present');
