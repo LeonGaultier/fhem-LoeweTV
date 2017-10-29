@@ -140,6 +140,10 @@
 ## - restart queue processing if present
 ## 0.0.50
 
+## - FIX: uninitialized values
+## - Umstellung client id statt TVMAC auf getUniqueId
+## 0.0.51
+
 ##
 ###############################################################################
 ###############################################################################
@@ -180,7 +184,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.50";
+my $version = "0.0.51";
 
 # Declare functions
 sub LoeweTV_Define($$);
@@ -899,7 +903,7 @@ sub LoeweTV_SendRequest($$;$$$) {
     my %actions = (
         "RequestAccess"         =>  [sub {$content='<ltv:DeviceType>Homeautomation</ltv:DeviceType>
                                         <ltv:DeviceName>FHEM</ltv:DeviceName>
-                                        <ltv:DeviceUUID>'.$hash->{TVMAC}.'</ltv:DeviceUUID>
+                                        <ltv:DeviceUUID>'.getUniqueId().'</ltv:DeviceUUID>
                                         <ltv:RequesterName>FHEM</ltv:RequesterName>'},
                                         {'m:ClientId' => sub {$hash->{CLIENTID} = $_->text_only('m:ClientId')},
                                         'm:AccessStatus' => sub {LoeweTV_ParseRequestAccess($hash, $_->text_only('m:AccessStatus'));},}
@@ -1346,7 +1350,7 @@ sub LoeweTV_NewChannelList($$) {
     # handle this only if there is a channellist id
     return if ((  ! defined( $channelist ) ) || ( $channelist eq "" ) );
 
-    if ( $hash->{helper}{ChannelListView} ne $channelist ) {
+    if ( ( ! defined($hash->{helper}{ChannelList}) ) || ( $hash->{helper}{ChannelListView} ne $channelist ) ) {
       # delete current content if content returned
       delete( $hash->{helper}{ChannelList} );
       my %tmp = ();
