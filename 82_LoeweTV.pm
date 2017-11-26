@@ -144,6 +144,8 @@
 ## - Umstellung client id statt TVMAC auf getUniqueId
 ## 0.0.51
 
+## - Fix setactionfield in set list
+## 0.0.52
 ##
 ###############################################################################
 ###############################################################################
@@ -184,7 +186,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.51";
+my $version = "0.0.52";
 
 # Declare functions
 sub LoeweTV_Define($$);
@@ -538,8 +540,9 @@ sub LoeweTV_Set($@) {
 
     } else {
     
-        my $list    = "off:noArg on:noArg pause:noArg stop:noArg play:noArg record:noArg fastforward:noArg rewind:noArg".
-              "SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg connect:noArg ".
+        my $list    = "off:noArg on:noArg pause:noArg stop:noArg ".
+              " play:noArg record:noArg fastforward:noArg rewind:noArg ".
+              " SetActionField volume:slider,0,1,100 RemoteKey mute:on,off WakeUp:noArg connect:noArg ".
               " switchTo switchToNumber reset:noArg ";
         if ( LoeweTV_hasChannelList( $hash ) ) {
           my $onames = LoeweTV_GetChannelNames( $hash, "`´" );
