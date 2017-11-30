@@ -146,6 +146,10 @@
 
 ## - Fix setactionfield in set list
 ## 0.0.52
+
+## - args will be always available in callback --> avoid issue with noninitialized
+## 0.0.53
+
 ##
 ###############################################################################
 ###############################################################################
@@ -186,7 +190,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.52";
+my $version = "0.0.53";
 
 # Declare functions
 sub LoeweTV_Define($$);
@@ -1082,12 +1086,12 @@ sub LoeweTV_SendRequest($$;$$$) {
     Log3 $name, 5, "Sub LoeweTV_SendRequest ($name) - Action ".$actionString."   Request: ".Dumper($message);
     
     # send the request non blocking
+    $hash->{HU_DO_PARAMS}->{args} = \@args;    # add args now always
     if ( defined( $ret ) ) {
       Log3 $name, 1, "LoeweTV_SendRequest $name: Failed with :$ret:";
       LoeweTV_HU_Callback( $hash->{HU_SR_PARAMS}, $ret, "");
 
     } else {
-      $hash->{HU_DO_PARAMS}->{args} = \@args;
       
       Log3 $name, 4, "LoeweTV_SendRequest $name: call url :".$hash->{HU_SR_PARAMS}->{url}.": ";
       HttpUtils_NonblockingGet( $hash->{HU_SR_PARAMS} );
@@ -1303,7 +1307,7 @@ sub LoeweTV_HU_RunQueue($)
     
   if ( ( defined( $hash->{actionQueue} ) ) && ( scalar( @{ $hash->{actionQueue} } ) > 0 ) ) {
     my $ref = shift @{ $hash->{actionQueue} };
-    Log3 $name, 4, "LoeweTV_HU_Callback $name: handle queued cmd with :@$ref[0]: ";
+    Log3 $name, 4, "LoeweTV_HU_RunQueue $name: handle queued cmd with :@$ref[0]: ";
     LoeweTV_SendRequest( $hash, @$ref[0], @$ref[1], @$ref[2] );
   }
 }
