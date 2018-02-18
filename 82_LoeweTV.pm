@@ -150,6 +150,10 @@
 ## - args will be always available in callback --> avoid issue with noninitialized
 ## 0.0.53
 
+## - change log level fro add channel
+## - FIX: ensure request access not looping when not present
+## 0.0.54
+  
 ##
 ###############################################################################
 ###############################################################################
@@ -190,7 +194,7 @@ eval "use XML::Twig;1" or $missingModul .= "XML::Twig ";
 use Blocking;
 
 
-my $version = "0.0.53";
+my $version = "0.0.54";
 
 # Declare functions
 sub LoeweTV_Define($$);
@@ -334,6 +338,7 @@ sub LoeweTV_Reset($) {
     readingsBulkUpdate($hash,'Chassis',0);    
     readingsEndUpdate($hash, 1);   
     
+    $hash->{actionQueue} = undef;
     LoeweTV_resetChannelList($hash);
     
     if( $init_done ) {
@@ -897,11 +902,14 @@ sub LoeweTV_SendRequest($$;$$$) {
       Log3 $name, 4, "LoeweTV_SendRequest $name: add action to queue - args ".$actionString;
       push( @{ $hash->{actionQueue} }, \@args );
       
-      $action = "RequestAccess";
-      $actPar1 = undef;
-      $actPar2 = undef;
-      # update cmdstring
-      $actionString = $action.(defined($actPar1)?"  Par1:".$actPar1.":":"")."  ".(defined($actPar2)?"  Par2:".$actPar2.":":"");
+      Log3 $name, 4, "LoeweTV_SendRequest $name: RequestAccess instead";
+      return LoeweTV_SendRequest($hash,"RequestAccess" );
+      
+#      $action = "RequestAccess";
+#      $actPar1 = undef;
+#      $actPar2 = undef;
+#      # update cmdstring
+#      $actionString = $action.(defined($actPar1)?"  Par1:".$actPar1.":":"")."  ".(defined($actPar2)?"  Par2:".$actPar2.":":"");
     } 
   
     $hash->{doStatus} = "WAITING";
@@ -1222,7 +1230,7 @@ sub LoeweTV_Presence($) {
     my $hash    = shift;    
     my $name    = $hash->{NAME};
     
-    $hash->{helper}{RUNNING_PID} = BlockingCall("LoeweTV_PresenceRun", $name.'|'.$hash->{HOST}, "LoeweTV_PresenceDone", 5, "LoeweTV_PresenceAborted", $hash) unless(exists($hash->{helper}{RUNNING_PID}) );
+    $hash->{helper}{RUNNING_PID} = BlockingCall("LoeweTV_PresenceRun", $name.'|'.$hash->{HOST}, "LoeweTV_PresenceDone", 15, "LoeweTV_PresenceAborted", $hash) unless(exists($hash->{helper}{RUNNING_PID}) );
 }
 
 sub LoeweTV_PresenceRun($) {
@@ -1426,7 +1434,7 @@ sub LoeweTV_ChannelList_AddChannelXML($$$$$$) {
     $shortinfo = "" if ( ! defined( $shortinfo ) );
     $streamingurl = "" if ( ! defined( $streamingurl ) );
     
-    Log3 $name, 2, "LoeweTV_ChannelList_AddChannel $name: Add channellist UUID: ".$uuid."  shortinfo: ".$shortinfo."   caption: ".$caption."  locator :".$locator."  streamingurl: ".$streamingurl.":";
+    Log3 $name, 4, "LoeweTV_ChannelList_AddChannel $name: Add channellist UUID: ".$uuid."  shortinfo: ".$shortinfo."   caption: ".$caption."  locator :".$locator."  streamingurl: ".$streamingurl.":";
     
     # no channellist ignore
     return undef if ( ! defined( $hash->{helper}{ChannelList} ) );
